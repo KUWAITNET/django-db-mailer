@@ -6,7 +6,7 @@ import uuid
 import os
 import re
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from django.utils.html import strip_tags
 from django.utils.timezone import now
 from django.core.cache import cache
@@ -672,7 +672,8 @@ class MailLogTrack(models.Model):
                 import httpagentparser
 
                 data = httpagentparser.detect(self.ua)
-                get = lambda b, k: data.get(b, {}).get(k, '')
+                def get(b, k):
+                    return data.get(b, {}).get(k, '')
 
                 self.ua_os = get('os', 'name')
                 self.ua_os_version = get('os', 'version')
