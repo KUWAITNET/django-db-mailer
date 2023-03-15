@@ -8,7 +8,12 @@ import sys
 
 from django.db.models.fields.related import ManyToManyField, ForeignKey
 from django.core.mail import EmailMessage, EmailMultiAlternatives
-from django.core.urlresolvers import reverse, NoReverseMatch
+
+try:
+    from django.core.urlresolvers import reverse, NoReverseMatch
+except ImportError:
+    from django.urls import reverse, NoReverseMatch
+
 from django.contrib.sites.models import Site
 from django.template import Template, Context
 from django.core.mail import get_connection
@@ -16,8 +21,8 @@ from django.utils import translation
 from django.conf import settings
 from django.core import signing
 
+from dbmail.models import MailTemplate, MailLog, MailGroup, MailLogException
 from dbmail.defaults import SHOW_CONTEXT, ENABLE_LOGGING, ADD_HEADER
-from dbmail.models import MailTemplate, MailLog, MailGroup
 from dbmail.exceptions import StopSendingException
 from dbmail.utils import clean_html
 from dbmail import import_module
@@ -227,11 +232,11 @@ class Sender(object):
                 if instance.pk is None:
                     data[f.name] = []
                 else:
-                    data[f.name] = list(f.value_from_object(
-                        instance).values_list('pk', flat=True))
+                    data[f.name] = [
+                        item.pk for item in f.value_from_object(instance)]
             elif isinstance(f, ForeignKey):
                 if getattr(instance, f.name):
-                    data[f.name] = getattr(instance, f.name).__unicode__()
+                    data[f.name] = getattr(instance, f.name).__str__()
             else:
                 data[f.name] = f.value_from_object(instance)
         return data
@@ -261,6 +266,7 @@ class Sender(object):
                 )
 
     def _try_to_send(self):
+        self._kwargs.pop('queue', None)
         for self._num in range(1, self._template.num_of_retries + 1):
             try:
                 self._send()
@@ -271,26 +277,38 @@ class Sender(object):
                     raise
                 time.sleep(defaults.SEND_RETRY_DELAY_DIRECT)
 
+    def _ignore_exception(self):
+        return self._err_exc in MailLogException.get_ignored_exceptions()
+
     def send(self, is_celery=True):
-        from dbmail.signals import pre_send, post_send
+        from dbmail.signals import pre_send, post_send, post_exception
 
         if self._template.is_active:
             try:
-                pre_send.send(self.__class__, instace=self, **self._signals_kw)
+                pre_send.send(
+                    self.__class__, instance=self, **self._signals_kw)
                 if is_celery is True:
                     self._send()
                 else:
                     self._try_to_send()
                 self._store_log(True)
                 post_send.send(
-                    self.__class__, instace=self, **self._signals_kw)
+                    self.__class__, instance=self, **self._signals_kw)
                 return 'OK'
             except StopSendingException:
                 return
             except Exception as exc:
+                post_exception.send(
+                    self.__class__,
+                    instance=self,
+                    exc_instance=exc,
+                    **self._signals_kw
+                )
                 self._err_msg = traceback.format_exc()
                 self._err_exc = exc.__class__.__name__
                 self._store_log(False)
+                if self._ignore_exception():
+                    return
                 raise
 
     @staticmethod

@@ -11,7 +11,7 @@ from django import dispatch
 
 from dbmail.defaults import (
     SIGNALS_QUEUE, SIGNALS_MAIL_QUEUE, SIGNAL_DEFERRED_DISPATCHER,
-    ENABLE_USERS, SEND_RETRY, SEND_RETRY_DELAY
+    ENABLE_USERS, SEND_RETRY, SEND_RETRY_DELAY, ENABLE_CELERY
 )
 from dbmail.models import Signal, SignalDeferredDispatch
 
@@ -145,8 +145,8 @@ def signal_receiver(sender, **kwargs):
     if 'signal' in kwargs:
         kwargs.pop('signal')
 
-    if celery_supported():
-        import tasks
+    if celery_supported() and ENABLE_CELERY:
+        from dbmail import tasks
 
         tasks.signal_receiver.apply_async(
             args=[sender], kwargs=kwargs,
@@ -169,6 +169,7 @@ def initial_signals():
 
 pre_send = dispatch.Signal()
 post_send = dispatch.Signal()
+post_exception = dispatch.Signal()
 
 safari_push_package = dispatch.Signal()
 safari_subscribe = dispatch.Signal()
